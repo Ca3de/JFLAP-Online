@@ -124,6 +124,15 @@ class JFLAPApp {
             this.showTransitionModal(from, to);
         };
 
+        // Simulator callbacks - re-render canvas on each step to show active states
+        this.simulator.onStepComplete = () => {
+            this.render();
+        };
+
+        this.simulator.onSimulationComplete = () => {
+            this.render();
+        };
+
         // Custom events for modals
         document.addEventListener('openStateProperties', (e) => {
             this.showStateModal(e.detail.state);
