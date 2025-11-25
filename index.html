@@ -63,78 +63,78 @@
                 <div class="canvas-container">
                     <canvas id="automata-canvas"></canvas>
                     <div id="canvas-overlay" class="canvas-overlay hidden"></div>
+
+                    <!-- Turing Machine Tape (hidden by default) -->
+                    <div id="tm-tape-container" class="tm-tape-container hidden">
+                        <div class="tape-wrapper">
+                            <button id="tape-left" class="tape-nav">&lt;</button>
+                            <div id="tm-tape" class="tm-tape"></div>
+                            <button id="tape-right" class="tape-nav">&gt;</button>
+                        </div>
+                        <div class="tape-info">
+                            <span>Head: <strong id="head-position">0</strong></span>
+                            <span>State: <strong id="current-tm-state">-</strong></span>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Properties Panel -->
-                <div class="properties-panel" id="properties-panel">
-                    <h3>Properties</h3>
-                    <div id="properties-content">
-                        <p class="hint">Select a state or transition to edit its properties.</p>
+                <!-- Right Panel - Simulation Results -->
+                <div class="right-panel" id="right-panel">
+                    <!-- Input Section -->
+                    <div class="panel-section">
+                        <h3>Input</h3>
+                        <div class="input-row">
+                            <input type="text" id="input-string" placeholder="Enter input string...">
+                        </div>
+                        <div class="button-row">
+                            <button id="btn-run" class="btn btn-primary">Run</button>
+                            <button id="btn-step" class="btn btn-secondary">Step</button>
+                            <button id="btn-reset" class="btn btn-secondary">Reset</button>
+                        </div>
+                        <div class="speed-row">
+                            <label for="speed-slider">Speed:</label>
+                            <input type="range" id="speed-slider" min="1" max="10" value="5">
+                            <span id="speed-value">5</span>
+                        </div>
                     </div>
-                </div>
-            </div>
 
-            <!-- Turing Machine Tape (hidden by default) -->
-            <div id="tm-tape-container" class="tm-tape-container hidden">
-                <h3>Turing Machine Tape</h3>
-                <div class="tape-wrapper">
-                    <button id="tape-left" class="tape-nav">&lt;</button>
-                    <div id="tm-tape" class="tm-tape"></div>
-                    <button id="tape-right" class="tape-nav">&gt;</button>
-                </div>
-                <div class="tape-info">
-                    <span>Head Position: <strong id="head-position">0</strong></span>
-                    <span>Current State: <strong id="current-tm-state">-</strong></span>
-                </div>
-            </div>
+                    <!-- Status Section -->
+                    <div class="panel-section">
+                        <h3>Status</h3>
+                        <div class="status-grid">
+                            <div class="status-row">
+                                <span class="status-label">Result:</span>
+                                <span id="sim-status" class="status-badge">Ready</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="status-label">State:</span>
+                                <span id="sim-current-state" class="status-value">-</span>
+                            </div>
+                            <div class="status-row">
+                                <span class="status-label">Remaining:</span>
+                                <span id="sim-remaining" class="status-value mono">-</span>
+                            </div>
+                            <div class="status-row" id="stack-display" style="display: none;">
+                                <span class="status-label">Stack:</span>
+                                <span id="sim-stack" class="status-value mono">-</span>
+                            </div>
+                        </div>
+                    </div>
 
-            <!-- Simulation Panel -->
-            <div class="simulation-panel">
-                <h3>Simulation</h3>
-                <div class="input-section">
-                    <label for="input-string">Input String:</label>
-                    <input type="text" id="input-string" placeholder="Enter input string...">
-                    <button id="btn-run" class="btn btn-primary">Run</button>
-                    <button id="btn-step" class="btn btn-secondary">Step</button>
-                    <button id="btn-reset" class="btn btn-secondary">Reset</button>
-                </div>
-                <div class="simulation-controls">
-                    <label for="speed-slider">Speed:</label>
-                    <input type="range" id="speed-slider" min="1" max="10" value="5">
-                    <span id="speed-value">5</span>
-                </div>
-                <div class="simulation-status">
-                    <div class="status-item">
-                        <label>Status:</label>
-                        <span id="sim-status" class="status-badge">Ready</span>
+                    <!-- Execution Trace -->
+                    <div class="panel-section trace-section">
+                        <h3>Execution Trace</h3>
+                        <div id="trace-output" class="trace-output"></div>
                     </div>
-                    <div class="status-item">
-                        <label>Current State:</label>
-                        <span id="sim-current-state">-</span>
-                    </div>
-                    <div class="status-item">
-                        <label>Remaining Input:</label>
-                        <span id="sim-remaining">-</span>
-                    </div>
-                    <div class="status-item" id="stack-display" style="display: none;">
-                        <label>Stack:</label>
-                        <span id="sim-stack">-</span>
-                    </div>
-                </div>
-                <div class="simulation-trace">
-                    <label>Execution Trace:</label>
-                    <div id="trace-output" class="trace-output"></div>
-                </div>
-            </div>
 
-            <!-- Multiple Input Testing -->
-            <div class="batch-testing-panel">
-                <h3>Batch Testing</h3>
-                <div class="batch-input">
-                    <textarea id="batch-inputs" placeholder="Enter multiple test strings (one per line)..."></textarea>
-                    <button id="btn-batch-run" class="btn btn-primary">Test All</button>
+                    <!-- Batch Testing -->
+                    <div class="panel-section">
+                        <h3>Batch Testing</h3>
+                        <textarea id="batch-inputs" placeholder="One string per line..."></textarea>
+                        <button id="btn-batch-run" class="btn btn-primary btn-full">Test All</button>
+                        <div id="batch-results" class="batch-results"></div>
+                    </div>
                 </div>
-                <div id="batch-results" class="batch-results"></div>
             </div>
         </div>
 

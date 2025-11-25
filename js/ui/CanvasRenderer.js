@@ -259,21 +259,27 @@ class CanvasRenderer {
      */
     drawSelfLoop(pos, radius, transition, color, automaton) {
         const loopRadius = this.selfLoopRadius * this.scale;
-        const loopCenterY = pos.y - radius - loopRadius;
+        const loopCenterY = pos.y - radius - loopRadius + 5 * this.scale;
 
-        // Draw loop arc
+        // Draw loop arc - draw counterclockwise to get the top part of the circle
+        // Start from bottom-right, go counterclockwise to bottom-left (through the top)
+        const startAngle = 0.3 * Math.PI;  // ~54 degrees, bottom-right
+        const endAngle = 0.7 * Math.PI;    // ~126 degrees, bottom-left
+
         this.ctx.beginPath();
-        this.ctx.arc(pos.x, loopCenterY, loopRadius, 0.2 * Math.PI, 0.8 * Math.PI);
+        this.ctx.arc(pos.x, loopCenterY, loopRadius, startAngle, endAngle, true); // true = counterclockwise
         this.ctx.strokeStyle = color;
         this.ctx.lineWidth = 2 * this.scale;
         this.ctx.stroke();
 
-        // Arrow head on the right side
-        const arrowX = pos.x + loopRadius * Math.cos(0.2 * Math.PI);
-        const arrowY = loopCenterY + loopRadius * Math.sin(0.2 * Math.PI);
-        this.drawArrowHead(arrowX, arrowY, -0.3 * Math.PI, color);
+        // Arrow head pointing into the state (at the end of the arc, bottom-left)
+        const arrowX = pos.x + loopRadius * Math.cos(endAngle);
+        const arrowY = loopCenterY + loopRadius * Math.sin(endAngle);
+        // Arrow should point down and right (into the state)
+        const arrowAngle = endAngle + Math.PI * 0.5;
+        this.drawArrowHead(arrowX, arrowY, arrowAngle, color);
 
-        // Label
+        // Label above the loop
         const label = transition.getLabel(automaton.type);
         this.ctx.fillStyle = this.colors.transitionText;
         this.ctx.font = `${12 * this.scale}px 'Segoe UI', sans-serif`;
