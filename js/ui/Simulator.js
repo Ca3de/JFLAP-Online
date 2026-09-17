@@ -1,183 +1,133 @@
 /**
- * Simulator - Handles automaton simulation and UI updates
+ * Simulator - drives a machine and renders the inspector panel:
+ * verdict, input string with a read head, current states, PDA stack,
+ * TM tape, step trace and the batch tester.
  */
 class Simulator {
     constructor() {
         this.automaton = null;
         this.isRunning = false;
         this.isPaused = false;
-        this.speed = 5; // 1-10 scale
+        this.speed = 7;
         this.stepInterval = null;
+        this.status = 'ready';
 
-        // UI Elements
         this.inputField = document.getElementById('input-string');
-        this.statusBadge = document.getElementById('sim-status');
-        this.currentStateDisplay = document.getElementById('sim-current-state');
-        this.remainingInputDisplay = document.getElementById('sim-remaining');
-        this.stackDisplay = document.getElementById('sim-stack');
-        this.stackContainer = document.getElementById('stack-display');
-        this.traceOutput = document.getElementById('trace-output');
+        this.verdict = document.getElementById('verdict');
+        this.verdictText = document.getElementById('verdict-text');
+        this.verdictNote = document.getElementById('verdict-note');
+        this.inputStrip = document.getElementById('input-strip');
+        this.stateChips = document.getElementById('state-chips');
+        this.stateCount = document.getElementById('state-count');
+        this.stackBlock = document.getElementById('stack-block');
+        this.stackView = document.getElementById('stack-view');
+        this.tapeBlock = document.getElementById('tape-block');
+        this.tapeView = document.getElementById('tape-view');
+        this.headPos = document.getElementById('head-pos');
+        this.traceView = document.getElementById('trace');
         this.speedSlider = document.getElementById('speed-slider');
         this.speedValue = document.getElementById('speed-value');
 
-        // TM Elements
-        this.tmTapeContainer = document.getElementById('tm-tape-container');
-        this.tmTape = document.getElementById('tm-tape');
-        this.headPositionDisplay = document.getElementById('head-position');
-        this.currentTMStateDisplay = document.getElementById('current-tm-state');
-
-        // Callbacks
         this.onStepComplete = null;
         this.onSimulationComplete = null;
 
-        this.setupEventListeners();
-    }
-
-    /**
-     * Setup event listeners
-     */
-    setupEventListeners() {
         if (this.speedSlider) {
             this.speedSlider.addEventListener('input', (e) => {
-                this.speed = parseInt(e.target.value);
-                if (this.speedValue) {
-                    this.speedValue.textContent = this.speed;
-                }
+                this.speed = parseInt(e.target.value, 10);
+                if (this.speedValue) this.speedValue.textContent = this.speed;
+                if (this.isRunning) { this.stop(); this.run(true); }
             });
         }
     }
 
-    /**
-     * Set the automaton
-     */
     setAutomaton(automaton) {
+        this.stop();
         this.automaton = automaton;
-        this.reset();
         this.updateMachineTypeUI();
+        this.reset();
     }
 
-    /**
-     * Update UI based on machine type
-     */
     updateMachineTypeUI() {
         if (!this.automaton) return;
-
-        // Show/hide stack display for PDA
-        if (this.stackContainer) {
-            this.stackContainer.style.display = this.automaton.type === 'pda' ? 'flex' : 'none';
-        }
-
-        // Show/hide TM tape
-        if (this.tmTapeContainer) {
-            this.tmTapeContainer.classList.toggle('hidden', this.automaton.type !== 'tm');
+        this.stackBlock.classList.toggle('hidden', this.automaton.type !== 'pda');
+        this.tapeBlock.classList.toggle('hidden', this.automaton.type !== 'tm');
+        if (this.inputField) {
+            this.inputField.placeholder = this.automaton.type === 'tm'
+                ? 'tape contents' : 'input string';
         }
     }
 
-    /**
-     * Initialize simulation with input
-     */
+    /* ------------------------------------------------------------ lifecycle */
+
     init(input) {
         if (!this.automaton) return false;
-
-        const success = this.automaton.initSimulation(input || '');
-
-        this.updateStatus('ready');
-        this.updateDisplay();
-
-        return success;
+        const started = this.automaton.initSimulation(input || '');
+        this.setStatus('ready');
+        this.renderTrace();
+        this.render();
+        return started;
     }
 
-    /**
-     * Reset simulation
-     */
     reset() {
         this.stop();
-
         if (this.automaton) {
-            this.automaton.resetSimulation();
+            this.automaton.initSimulation(this.inputField ? this.inputField.value : '');
+            this.automaton.trace = [];
         }
-
-        this.updateStatus('ready');
-        this.clearTrace();
-        this.updateDisplay();
+        this.setStatus('ready');
+        this.renderTrace();
+        this.render();
     }
 
-    /**
-     * Perform one step
-     */
+    /** True when the machine has not been initialised for the current input. */
+    needsInit() {
+        if (!this.automaton) return true;
+        if (this.automaton.trace.length === 0) return true;
+        const current = this.inputField ? this.inputField.value : '';
+        return this.automaton.input !== current;
+    }
+
     step() {
         if (!this.automaton) return false;
+        if (this.needsInit()) this.init(this.inputField ? this.inputField.value : '');
 
-        // Initialize if not already
-        if (this.automaton.trace.length === 0) {
-            const input = this.inputField ? this.inputField.value : '';
-            this.init(input);
-        }
+        const finished = this.automaton.isAccepted !== null;
+        if (finished) return false;
 
         const continued = this.automaton.step();
-        this.updateDisplay();
-        this.appendTrace();
 
-        if (this.onStepComplete) {
-            this.onStepComplete(this.automaton);
-        }
+        this.render();
+        this.renderTrace();
+        if (this.onStepComplete) this.onStepComplete(this.automaton);
 
         if (!continued || this.automaton.isAccepted !== null) {
             this.complete();
             return false;
         }
 
+        // Mid-run, whether the steps came from the play loop or the button.
+        this.setStatus('running');
         return true;
     }
 
-    /**
-     * Run simulation automatically
-     */
-    run() {
+    run(keepInit = false) {
         if (!this.automaton) return;
-
-        // Initialize if not already
-        if (this.automaton.trace.length === 0) {
-            const input = this.inputField ? this.inputField.value : '';
-            this.init(input);
-        }
+        if (!keepInit) this.init(this.inputField ? this.inputField.value : '');
 
         this.isRunning = true;
         this.isPaused = false;
-        this.updateStatus('running');
+        this.setStatus('running');
 
-        // Calculate interval based on speed
-        const interval = Math.max(50, 1000 - (this.speed * 90));
-
+        const interval = Math.max(35, 900 - this.speed * 88);
         this.stepInterval = setInterval(() => {
             if (this.isPaused) return;
-
-            const continued = this.step();
-            if (!continued) {
-                this.stop();
-            }
+            if (!this.step()) this.stop();
         }, interval);
     }
 
-    /**
-     * Pause simulation
-     */
-    pause() {
-        this.isPaused = true;
-        this.updateStatus('paused');
-    }
+    pause() { this.isPaused = true; this.setStatus('paused'); }
+    resume() { this.isPaused = false; this.setStatus('running'); }
 
-    /**
-     * Resume simulation
-     */
-    resume() {
-        this.isPaused = false;
-        this.updateStatus('running');
-    }
-
-    /**
-     * Stop simulation
-     */
     stop() {
         if (this.stepInterval) {
             clearInterval(this.stepInterval);
@@ -187,247 +137,230 @@ class Simulator {
         this.isPaused = false;
     }
 
-    /**
-     * Mark simulation as complete
-     */
     complete() {
         this.stop();
-
-        if (this.automaton.isAccepted === true) {
-            this.updateStatus('accepted');
-        } else if (this.automaton.isAccepted === false) {
-            this.updateStatus('rejected');
-        }
-
+        if (this.automaton.isAccepted === true) this.setStatus('accepted');
+        else if (this.automaton.isAccepted === false) this.setStatus('rejected');
+        else this.setStatus('ready');
+        this.render();
         if (this.onSimulationComplete) {
             this.onSimulationComplete(this.automaton, this.automaton.isAccepted);
         }
     }
 
-    /**
-     * Update status badge
-     */
-    updateStatus(status) {
-        if (!this.statusBadge) return;
+    /* ------------------------------------------------------------ rendering */
 
-        this.statusBadge.className = 'status-badge';
-        switch (status) {
-            case 'ready':
-                this.statusBadge.textContent = 'Ready';
-                break;
-            case 'running':
-                this.statusBadge.textContent = 'Running';
-                this.statusBadge.classList.add('running');
-                break;
-            case 'paused':
-                this.statusBadge.textContent = 'Paused';
-                break;
-            case 'accepted':
-                this.statusBadge.textContent = 'Accepted';
-                this.statusBadge.classList.add('accepted');
-                break;
-            case 'rejected':
-                this.statusBadge.textContent = 'Rejected';
-                this.statusBadge.classList.add('rejected');
-                break;
+    setStatus(status) {
+        this.status = status;
+        if (!this.verdict) return;
+
+        const labels = {
+            ready: 'Ready',
+            running: 'Running',
+            paused: 'Paused',
+            accepted: 'Accepted',
+            rejected: 'Rejected'
+        };
+        const classes = {
+            running: 'is-running',
+            paused: 'is-running',
+            accepted: 'is-accepted',
+            rejected: 'is-rejected'
+        };
+
+        this.verdict.className = `verdict ${classes[status] || ''}`.trim();
+        this.verdictText.textContent = labels[status] || 'Ready';
+
+        let note = '';
+        if (this.automaton) {
+            const steps = Math.max(0, this.automaton.trace.length - 1);
+            if (status === 'accepted' || status === 'rejected' || status === 'running') {
+                note = `${steps} step${steps === 1 ? '' : 's'}`;
+            } else if (status === 'ready') {
+                note = this.automaton.input ? 'press Run' : '';
+            }
+        }
+        this.verdictNote.textContent = note;
+    }
+
+    render() {
+        if (!this.automaton) return;
+        this.renderInputStrip();
+        this.renderStates();
+        if (this.automaton.type === 'pda') this.renderStack();
+        if (this.automaton.type === 'tm') this.renderTape();
+    }
+
+    /** The input string, split into consumed / current / remaining. */
+    renderInputStrip() {
+        if (!this.inputStrip) return;
+        this.inputStrip.textContent = '';
+
+        if (this.automaton.type === 'tm') return; // the tape view covers it
+
+        const input = this.automaton.input || '';
+        if (input.length === 0) {
+            this.inputStrip.appendChild(
+                el('span', { class: 'cell-empty' }, 'ε — the empty string'));
+            return;
+        }
+
+        const index = Math.max(0, Math.min(input.length, this.automaton.inputIndex));
+        const done = this.automaton.isAccepted !== null;
+
+        for (let i = 0; i < input.length; i++) {
+            let cls = 'cell remaining';
+            if (i < index) cls = 'cell consumed';
+            else if (i === index && !done) cls = 'cell current';
+            this.inputStrip.appendChild(el('div', { class: cls }, input[i]));
         }
     }
 
-    /**
-     * Update current state display
-     */
-    updateDisplay() {
+    renderStates() {
+        if (!this.stateChips) return;
+        this.stateChips.textContent = '';
+
+        const names = Array.from(this.automaton.currentStates).map(s => s.name);
+        if (names.length === 0) {
+            this.stateChips.appendChild(el('span', { class: 'chip chip-empty' }, 'no live state'));
+        } else {
+            names.forEach(name => this.stateChips.appendChild(el('span', { class: 'chip' }, name)));
+        }
+
+        if (this.stateCount) {
+            this.stateCount.textContent = names.length > 1 ? `${names.length} live` : '';
+        }
+    }
+
+    renderStack() {
+        if (!this.stackView) return;
+        this.stackView.textContent = '';
+        const stack = this.automaton.stack || [];
+
+        if (stack.length === 0) {
+            this.stackView.appendChild(el('div', { class: 'stack-cell' }, 'empty'));
+            return;
+        }
+        stack.forEach((symbol, i) => {
+            this.stackView.appendChild(el('div', {
+                class: `stack-cell${i === stack.length - 1 ? ' top' : ''}`
+            }, symbol));
+        });
+    }
+
+    renderTape() {
+        if (!this.tapeView) return;
+        this.tapeView.textContent = '';
+
+        const cells = this.automaton.getDisplayTape(25);
+        cells.forEach(cell => {
+            const blank = cell.symbol === this.automaton.blankSymbol;
+            this.tapeView.appendChild(el('div', {
+                class: `cell${cell.isHead ? ' head' : ''}${blank ? ' blank' : ''}`,
+                title: `position ${cell.position}`
+            }, cell.symbol));
+        });
+
+        if (this.headPos) {
+            this.headPos.textContent = `head ${this.automaton.headPosition + this.automaton.visibleTapeStart}`;
+        }
+
+        const head = this.tapeView.querySelector('.head');
+        if (head && head.scrollIntoView) {
+            head.scrollIntoView({ block: 'nearest', inline: 'center' });
+        }
+    }
+
+    renderTrace() {
+        if (!this.traceView) return;
+        this.traceView.textContent = '';
         if (!this.automaton) return;
 
-        // Current state(s)
-        if (this.currentStateDisplay) {
-            const states = Array.from(this.automaton.currentStates).map(s => s.name);
-            if (states.length === 0) {
-                this.currentStateDisplay.textContent = '(none)';
-            } else if (states.length === 1) {
-                this.currentStateDisplay.textContent = states[0];
-            } else {
-                this.currentStateDisplay.innerHTML = `<div class="config-set">${states.map(s =>
-                    `<span class="config-badge">${s}</span>`
-                ).join('')}</div>`;
-            }
-        }
-
-        // Remaining input
-        if (this.remainingInputDisplay) {
-            const remaining = this.automaton.input.substring(this.automaton.inputIndex);
-            this.remainingInputDisplay.textContent = remaining || '(empty)';
-        }
-
-        // Stack (for PDA)
-        if (this.stackDisplay && this.automaton.type === 'pda') {
-            this.stackDisplay.textContent = this.automaton.getStackString();
-        }
-
-        // TM tape
-        if (this.automaton.type === 'tm') {
-            this.updateTMTape();
-        }
-    }
-
-    /**
-     * Update Turing Machine tape display
-     */
-    updateTMTape() {
-        if (!this.tmTape || !this.automaton || this.automaton.type !== 'tm') return;
-
-        const cells = this.automaton.getDisplayTape(21);
-        this.tmTape.innerHTML = '';
-
-        cells.forEach(cell => {
-            const cellDiv = document.createElement('div');
-            cellDiv.className = 'tape-cell';
-            if (cell.isHead) {
-                cellDiv.classList.add('head');
-            }
-            if (cell.symbol === this.automaton.blankSymbol) {
-                cellDiv.classList.add('blank');
-            }
-            cellDiv.textContent = cell.symbol;
-            cellDiv.title = `Position: ${cell.position}`;
-            this.tmTape.appendChild(cellDiv);
+        this.automaton.trace.forEach((entry, i) => {
+            const last = i === this.automaton.trace.length - 1;
+            this.traceView.appendChild(el('div', {
+                class: `trace-step${last ? ' current' : ''}`
+            }, [
+                el('span', { class: 'n' }, String(entry.step)),
+                el('span', { class: 'd' }, entry.description || '')
+            ]));
         });
 
-        // Update head position display
-        if (this.headPositionDisplay) {
-            this.headPositionDisplay.textContent = this.automaton.headPosition + this.automaton.visibleTapeStart;
-        }
-
-        // Update current state
-        if (this.currentTMStateDisplay) {
-            const state = Array.from(this.automaton.currentStates)[0];
-            this.currentTMStateDisplay.textContent = state ? state.name : '-';
-        }
+        this.traceView.scrollTop = this.traceView.scrollHeight;
     }
 
-    /**
-     * Clear trace output
-     */
-    clearTrace() {
-        if (this.traceOutput) {
-            this.traceOutput.innerHTML = '';
-        }
+    /* --------------------------------------------------------------- batch */
+
+    /** A line reading 'ε' means the empty string; blank lines are ignored. */
+    static parseBatchInputs(text) {
+        return text.split('\n')
+            .map(line => line.trim())
+            .filter(line => line.length > 0)
+            .map(line => (line === 'ε' || line === 'ϵ') ? '' : line);
     }
 
-    /**
-     * Append latest trace step
-     */
-    appendTrace() {
-        if (!this.traceOutput || !this.automaton) return;
-
-        const trace = this.automaton.trace;
-        if (trace.length === 0) return;
-
-        const lastStep = trace[trace.length - 1];
-
-        // Remove 'current' class from previous step
-        const prevCurrent = this.traceOutput.querySelector('.trace-step.current');
-        if (prevCurrent) {
-            prevCurrent.classList.remove('current');
-        }
-
-        const stepDiv = document.createElement('div');
-        stepDiv.className = 'trace-step current';
-        stepDiv.textContent = `Step ${lastStep.step}: ${lastStep.description}`;
-        this.traceOutput.appendChild(stepDiv);
-
-        // Scroll to bottom
-        this.traceOutput.scrollTop = this.traceOutput.scrollHeight;
-    }
-
-    /**
-     * Test a single string
-     */
-    testString(input) {
-        if (!this.automaton) return null;
-
-        // Create a copy of the automaton for testing
-        const testAutomaton = this.createTestCopy();
-        testAutomaton.initSimulation(input);
-        const result = testAutomaton.run();
-
-        return {
-            input: input,
-            accepted: result,
-            trace: testAutomaton.trace
-        };
-    }
-
-    /**
-     * Run batch tests
-     */
-    runBatchTests(inputs) {
-        const results = [];
-
-        inputs.forEach(input => {
-            const result = this.testString(input);
-            if (result) {
-                results.push(result);
-            }
-        });
-
-        return results;
-    }
-
-    /**
-     * Create a copy of the automaton for testing
-     */
     createTestCopy() {
         if (!this.automaton) return null;
-
         const json = this.automaton.toJSON();
         let copy;
-
         switch (this.automaton.type) {
-            case 'dfa':
-                copy = new DFA();
-                break;
-            case 'nfa':
-                copy = new NFA();
-                break;
-            case 'pda':
-                copy = new PDA();
-                break;
-            case 'tm':
-                copy = new TuringMachine();
-                break;
-            default:
-                copy = new NFA();
+            case 'nfa': copy = new NFA(); break;
+            case 'pda': copy = new PDA(); break;
+            case 'tm': copy = new TuringMachine(); break;
+            default: copy = new DFA(); break;
         }
-
-        copy.loadFromJSON(json, true);
+        copy.loadFromJSON(json);
         return copy;
     }
 
+    testString(input) {
+        const copy = this.createTestCopy();
+        if (!copy) return null;
+        copy.initSimulation(input);
+        return { input, accepted: copy.run() === true };
+    }
+
+    runBatchTests(inputs) {
+        return inputs.map(input => this.testString(input)).filter(Boolean);
+    }
+
     /**
-     * Display batch test results
+     * Render batch results. `expectations` maps a string to the verdict the
+     * example claims, so a mismatch is called out rather than quietly shown.
      */
-    displayBatchResults(results, container) {
+    displayBatchResults(results, container, summary, expectations = null) {
         if (!container) return;
+        container.textContent = '';
 
-        container.innerHTML = '';
-
+        let mismatches = 0;
         results.forEach(result => {
-            const resultDiv = document.createElement('div');
-            resultDiv.className = 'batch-result';
+            const expected = expectations ? expectations.get(result.input) : undefined;
+            const wrong = expected !== undefined && expected !== result.accepted;
+            if (wrong) mismatches++;
 
-            const inputSpan = document.createElement('span');
-            inputSpan.className = 'input-str';
-            inputSpan.textContent = result.input || '(empty)';
-
-            const badgeSpan = document.createElement('span');
-            badgeSpan.className = 'result-badge ' + (result.accepted ? 'accepted' : 'rejected');
-            badgeSpan.textContent = result.accepted ? 'Accepted' : 'Rejected';
-
-            resultDiv.appendChild(inputSpan);
-            resultDiv.appendChild(badgeSpan);
-            container.appendChild(resultDiv);
+            container.appendChild(el('div', { class: 'batch-row' }, [
+                el('span', { class: 's' }, result.input === '' ? 'ε' : result.input),
+                wrong ? el('span', { class: 'x' }, `expected ${expected ? 'accept' : 'reject'}`) : null,
+                el('span', {
+                    class: `v ${result.accepted ? 'yes' : 'no'}`
+                }, result.accepted ? 'accept' : 'reject')
+            ]));
         });
+
+        if (summary) {
+            summary.textContent = '';
+            const accepted = results.filter(r => r.accepted).length;
+            summary.appendChild(el('span', { class: 'batch-pass' },
+                `${accepted} accepted`));
+            summary.appendChild(el('span', { class: 'batch-fail' },
+                `${results.length - accepted} rejected`));
+            if (expectations) {
+                summary.appendChild(el('span', {
+                    class: mismatches === 0 ? 'batch-pass' : 'batch-fail'
+                }, mismatches === 0 ? 'all as documented' : `${mismatches} unexpected`));
+            }
+            summary.classList.toggle('hidden', results.length === 0);
+        }
     }
 }
 

@@ -1,250 +1,379 @@
 /**
- * JFLAP Online - Main Application
+ * JFLAP Online - application shell.
  */
-
 class JFLAPApp {
     constructor() {
-        // Initialize components
         this.canvas = document.getElementById('automata-canvas');
         this.renderer = new CanvasRenderer(this.canvas);
         this.editor = new CanvasEditor(this.canvas, this.renderer);
         this.simulator = new Simulator();
 
-        // Current automaton
         this.automaton = null;
         this.machineType = 'dfa';
+        this.currentExample = null;
+        this.galleryFilter = 'all';
+        this.toastTimer = null;
 
-        // Code editor state
-        this.codeEditorVisible = false;
-        this.currentCodeTab = 'json';
-
-        // Initialize
         this.init();
     }
 
-    /**
-     * Initialize the application
-     */
     init() {
-        this.createNewAutomaton('dfa');
+        this.setupTheme();
         this.setupEventListeners();
-        this.setupModals();
+        this.buildGallery();
+
+        // Open on the headline example so the tool explains itself.
+        const featured = Examples.byId('keypad');
+        if (featured) this.loadExample(featured, { silent: true });
+        else this.createNewAutomaton('dfa');
+
+        window.addEventListener('resize', () => {
+            this.renderer.resize();
+            this.render();
+        });
+    }
+
+    /* --------------------------------------------------------------- theme */
+
+    setupTheme() {
+        this.applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
+
+        const media = window.matchMedia('(prefers-color-scheme: dark)');
+        const onChange = () => {
+            let stored = null;
+            try { stored = localStorage.getItem('jflap-theme'); } catch (e) { /* ignore */ }
+            if (!stored) this.applyTheme(media.matches ? 'dark' : 'light');
+        };
+        if (media.addEventListener) media.addEventListener('change', onChange);
+    }
+
+    applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        // The canvas cannot inherit CSS - re-read the palette and repaint.
+        this.renderer.refreshTheme();
         this.render();
     }
 
-    /**
-     * Create a new automaton of the specified type
-     */
+    toggleTheme() {
+        const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        try { localStorage.setItem('jflap-theme', next); } catch (e) { /* ignore */ }
+        this.applyTheme(next);
+        this.toast(`${next === 'dark' ? 'Dark' : 'Light'} theme`);
+    }
+
+    /* ------------------------------------------------------------ machines */
+
     createNewAutomaton(type) {
         this.machineType = type;
-
         switch (type) {
-            case 'dfa':
-                this.automaton = new DFA();
-                break;
-            case 'nfa':
-                this.automaton = new NFA();
-                break;
-            case 'pda':
-                this.automaton = new PDA();
-                break;
-            case 'tm':
-                this.automaton = new TuringMachine();
-                break;
-            default:
-                this.automaton = new DFA();
+            case 'nfa': this.automaton = new NFA(); break;
+            case 'pda': this.automaton = new PDA(); break;
+            case 'tm': this.automaton = new TuringMachine(); break;
+            default: this.automaton = new DFA(); break;
         }
+
+        // Seed the timeline so the first edit is undoable back to empty.
+        this.automaton.saveToHistory();
+
+        this.currentExample = null;
+        this.attach();
+    }
+
+    /** Wire a freshly built automaton into the editor, simulator and UI. */
+    attach() {
+        document.getElementById('machine-type').value = this.automaton.type;
+        this.machineType = this.automaton.type;
 
         this.editor.setAutomaton(this.automaton);
         this.simulator.setAutomaton(this.automaton);
-        this.updateCodeEditor();
+
+        this.renderer.fitToView(this.automaton);
+        this.render();
+        this.syncUI();
     }
 
-    /**
-     * Setup event listeners
-     */
-    setupEventListeners() {
-        // Machine type selector
-        const machineTypeSelect = document.getElementById('machine-type');
-        if (machineTypeSelect) {
-            machineTypeSelect.addEventListener('change', (e) => {
-                if (confirm('Changing machine type will clear the current automaton. Continue?')) {
-                    this.createNewAutomaton(e.target.value);
-                } else {
-                    e.target.value = this.machineType;
-                }
-            });
+    loadExample(example, options = {}) {
+        this.automaton = Examples.build(example);
+        this.currentExample = example;
+        this.attach();
+
+        const input = document.getElementById('input-string');
+        if (input) input.value = Examples.decodeString(example.accept[0] || '');
+
+        const batch = document.getElementById('batch-inputs');
+        if (batch) {
+            batch.value = [...example.accept, ...example.reject].join('\n');
+        }
+        document.getElementById('batch-results').textContent = '';
+        document.getElementById('batch-summary').classList.add('hidden');
+
+        this.simulator.reset();
+        this.showExamplePanel(example);
+        this.render();
+
+        if (!options.silent) this.toast(`Loaded ${example.name}`);
+    }
+
+    showExamplePanel(example) {
+        const panel = document.getElementById('example-panel');
+        if (!panel) return;
+
+        if (!example) {
+            panel.classList.add('hidden');
+            return;
         }
 
-        // Tool buttons
-        document.getElementById('tool-select')?.addEventListener('click', () => this.editor.setTool('select'));
-        document.getElementById('tool-state')?.addEventListener('click', () => this.editor.setTool('state'));
-        document.getElementById('tool-transition')?.addEventListener('click', () => this.editor.setTool('transition'));
-        document.getElementById('tool-delete')?.addEventListener('click', () => this.editor.setTool('delete'));
+        panel.classList.remove('hidden');
+        document.getElementById('example-name').textContent = example.name;
+        document.getElementById('example-blurb').textContent = example.blurb;
+        document.getElementById('example-idea').textContent = example.idea;
 
-        // Header buttons
-        document.getElementById('btn-new')?.addEventListener('click', () => this.newAutomaton());
-        document.getElementById('btn-save')?.addEventListener('click', () => this.save());
-        document.getElementById('btn-load')?.addEventListener('click', () => this.load());
-        document.getElementById('btn-export')?.addEventListener('click', () => this.export());
-        document.getElementById('btn-help')?.addEventListener('click', () => this.showHelp());
-        document.getElementById('btn-clear')?.addEventListener('click', () => this.clear());
+        const note = document.getElementById('example-note');
+        note.textContent = example.note || '';
+        note.classList.toggle('hidden', !example.note);
 
-        // Simulation buttons
-        document.getElementById('btn-run')?.addEventListener('click', () => this.runSimulation());
-        document.getElementById('btn-step')?.addEventListener('click', () => this.stepSimulation());
-        document.getElementById('btn-reset')?.addEventListener('click', () => this.resetSimulation());
+        const meta = document.getElementById('example-meta');
+        meta.textContent = '';
+        meta.appendChild(el('span', { class: 'tag tag-accent' }, example.type.toUpperCase()));
+        meta.appendChild(el('span', { class: 'tag mono' },
+            `Σ = {${example.alphabet.join(', ')}}`));
+        meta.appendChild(el('span', { class: 'tag' },
+            `${example.accept.length} accept · ${example.reject.length} reject`));
+    }
 
-        // Batch testing
-        document.getElementById('btn-batch-run')?.addEventListener('click', () => this.runBatchTests());
+    /* -------------------------------------------------------------- gallery */
 
-        // Code editor
-        document.getElementById('btn-toggle-code')?.addEventListener('click', () => this.toggleCodeEditor());
-        document.getElementById('btn-apply-code')?.addEventListener('click', () => this.applyCode());
-        document.getElementById('btn-format-code')?.addEventListener('click', () => this.formatCode());
-        document.getElementById('btn-copy-code')?.addEventListener('click', () => this.copyCode());
+    buildGallery() {
+        const filters = document.getElementById('gallery-filters');
+        filters.textContent = '';
 
-        // Code tabs
-        document.querySelectorAll('.code-tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
-                this.setCodeTab(e.target.dataset.tab);
+        Examples.categories.forEach(category => {
+            filters.appendChild(el('button', {
+                class: `filter${category.id === this.galleryFilter ? ' active' : ''}`,
+                dataset: { filter: category.id },
+                onclick: () => {
+                    this.galleryFilter = category.id;
+                    this.buildGallery();
+                }
+            }, category.label));
+        });
+
+        const grid = document.getElementById('gallery-grid');
+        grid.textContent = '';
+
+        const shown = Examples.all.filter(e =>
+            this.galleryFilter === 'all' || e.type === this.galleryFilter);
+
+        shown.forEach(example => {
+            grid.appendChild(el('button', {
+                class: 'card',
+                onclick: () => {
+                    this.closeModals();
+                    this.loadExample(example);
+                }
+            }, [
+                el('div', { class: 'card-top' }, [
+                    el('span', { class: 'card-kind' }, example.type.toUpperCase()),
+                    example.featured ? el('span', { class: 'card-star' }, 'start here') : null
+                ]),
+                el('div', { class: 'card-name' }, example.name),
+                el('div', { class: 'card-blurb' }, example.blurb)
+            ]));
+        });
+
+        document.getElementById('gallery-count').textContent =
+            `${shown.length} of ${Examples.all.length}`;
+    }
+
+    /* --------------------------------------------------------------- events */
+
+    setupEventListeners() {
+        document.getElementById('machine-type').addEventListener('change', (e) => {
+            const type = e.target.value;
+            if (this.automaton && this.automaton.states.length > 0 &&
+                !confirm('Switching machine type starts a new, empty machine. Continue?')) {
+                e.target.value = this.machineType;
+                return;
+            }
+            this.createNewAutomaton(type);
+            this.showExamplePanel(null);
+            this.simulator.reset();
+        });
+
+        document.querySelectorAll('.tool[data-tool]').forEach(btn => {
+            btn.addEventListener('click', () => this.editor.setTool(btn.dataset.tool));
+        });
+
+        document.getElementById('btn-zoom-in').addEventListener('click', () => this.zoom(1.2));
+        document.getElementById('btn-zoom-out').addEventListener('click', () => this.zoom(1 / 1.2));
+        document.getElementById('btn-fit').addEventListener('click', () => {
+            this.renderer.fitToView(this.automaton);
+            this.render();
+        });
+
+        document.getElementById('btn-examples').addEventListener('click', () => this.openGallery());
+        document.getElementById('btn-empty-examples').addEventListener('click', () => this.openGallery());
+        document.getElementById('btn-new').addEventListener('click', () => this.newAutomaton());
+        document.getElementById('btn-open').addEventListener('click', () => this.open());
+        document.getElementById('btn-save').addEventListener('click', () => this.save());
+        document.getElementById('btn-help').addEventListener('click', () => this.openModal('help-modal'));
+        document.getElementById('btn-theme').addEventListener('click', () => this.toggleTheme());
+        document.getElementById('btn-undo').addEventListener('click', () => this.editor.undo());
+        document.getElementById('btn-redo').addEventListener('click', () => this.editor.redo());
+
+        document.getElementById('btn-run').addEventListener('click', () => this.runSimulation());
+        document.getElementById('btn-step').addEventListener('click', () => this.stepSimulation());
+        document.getElementById('btn-reset').addEventListener('click', () => this.resetSimulation());
+        document.getElementById('btn-batch').addEventListener('click', () => this.runBatchTests());
+
+        document.getElementById('input-string').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this.runSimulation();
+        });
+        document.getElementById('input-string').addEventListener('input', () => {
+            this.simulator.reset();
+            this.render();
+        });
+
+        // Modals
+        document.querySelectorAll('[data-close]').forEach(btn => {
+            btn.addEventListener('click', () => this.closeModals());
+        });
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('mousedown', (e) => {
+                if (e.target === modal) this.closeModals();
             });
         });
-
-        // TM tape navigation
-        document.getElementById('tape-left')?.addEventListener('click', () => this.scrollTape(-5));
-        document.getElementById('tape-right')?.addEventListener('click', () => this.scrollTape(5));
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') this.closeModals();
+        });
 
         // Editor callbacks
-        this.editor.onAutomatonChanged = () => {
-            this.updateCodeEditor();
-        };
+        this.editor.onAutomatonChanged = () => this.syncUI();
+        this.editor.onViewChanged = () => this.syncUI();
+        this.editor.onRequestTransitionInput = (from, to) => this.showTransitionModal(from, to);
+        this.simulator.onStepComplete = () => this.render();
+        this.simulator.onSimulationComplete = () => this.render();
 
-        this.editor.onRequestTransitionInput = (from, to) => {
-            this.showTransitionModal(from, to);
-        };
+        document.addEventListener('openStateProperties', (e) => this.showStateModal(e.detail.state));
+        document.addEventListener('openTransitionProperties', (e) =>
+            this.showTransitionEditModal(e.detail.transition));
 
-        // Simulator callbacks - re-render canvas on each step to show active states
-        this.simulator.onStepComplete = () => {
-            this.render();
-        };
-
-        this.simulator.onSimulationComplete = () => {
-            this.render();
-        };
-
-        // Custom events for modals
-        document.addEventListener('openStateProperties', (e) => {
-            this.showStateModal(e.detail.state);
-        });
-
-        document.addEventListener('openTransitionProperties', (e) => {
-            this.showTransitionEditModal(e.detail.transition);
-        });
-
-        // Keyboard shortcuts
+        // Global shortcuts
         document.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key === 's') {
+            const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                 e.preventDefault();
                 this.save();
-            } else if (e.ctrlKey && e.key === 'o') {
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
                 e.preventDefault();
-                this.load();
-            } else if (e.key === ' ' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
-                e.preventDefault();
-                if (this.simulator.isRunning) {
-                    this.simulator.isPaused ? this.simulator.resume() : this.simulator.pause();
-                } else {
-                    this.runSimulation();
-                }
-            } else if (e.key === 'ArrowRight' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
+                this.open();
+            } else if (e.key === 'ArrowRight' && !typing && !this.anyModalOpen()) {
                 e.preventDefault();
                 this.stepSimulation();
-            }
-        });
-
-        // Input field enter key
-        document.getElementById('input-string')?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
                 this.runSimulation();
             }
         });
     }
 
-    /**
-     * Setup modal interactions
-     */
-    setupModals() {
-        // Close buttons
-        document.querySelectorAll('.modal-close').forEach(btn => {
-            btn.addEventListener('click', () => this.closeAllModals());
-        });
+    zoom(factor) {
+        this.renderer.zoomAt(factor, this.renderer.width / 2, this.renderer.height / 2);
+        this.render();
+        this.syncUI();
+    }
 
-        // Click outside to close
-        document.querySelectorAll('.modal').forEach(modal => {
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    this.closeAllModals();
-                }
+    /* ---------------------------------------------------------------- modals */
+
+    anyModalOpen() {
+        return !!document.querySelector('.modal:not(.hidden)');
+    }
+
+    openModal(id) {
+        document.getElementById(id).classList.remove('hidden');
+    }
+
+    closeModals() {
+        document.querySelectorAll('.modal').forEach(m => m.classList.add('hidden'));
+    }
+
+    openGallery() {
+        this.buildGallery();
+        this.openModal('gallery-modal');
+    }
+
+    /* ----------------------------------------------------------- simulation */
+
+    runSimulation() {
+        this.simulator.run();
+        this.render();
+    }
+
+    stepSimulation() {
+        this.simulator.step();
+        this.render();
+    }
+
+    resetSimulation() {
+        this.simulator.reset();
+        this.render();
+    }
+
+    runBatchTests() {
+        const textarea = document.getElementById('batch-inputs');
+        const results = document.getElementById('batch-results');
+        const summary = document.getElementById('batch-summary');
+
+        const inputs = Simulator.parseBatchInputs(textarea.value);
+        if (inputs.length === 0) {
+            results.textContent = '';
+            summary.classList.add('hidden');
+            this.toast('Nothing to test');
+            return;
+        }
+
+        // When an example is loaded, hold each verdict against what it claims.
+        let expectations = null;
+        if (this.currentExample) {
+            expectations = new Map();
+            Examples.testStrings(this.currentExample).forEach(c => {
+                expectations.set(c.input, c.expected);
             });
-        });
+        }
 
-        // Help modal close
-        document.getElementById('help-modal')?.querySelector('.modal-close')?.addEventListener('click', () => {
-            document.getElementById('help-modal').classList.add('hidden');
-        });
+        const outcomes = this.simulator.runBatchTests(inputs);
+        this.simulator.displayBatchResults(outcomes, results, summary, expectations);
     }
 
-    /**
-     * Close all modals
-     */
-    closeAllModals() {
-        document.querySelectorAll('.modal').forEach(modal => {
-            modal.classList.add('hidden');
-        });
-    }
+    /* ------------------------------------------------------------ file i/o */
 
-    /**
-     * New automaton
-     */
     newAutomaton() {
-        if (confirm('Create new automaton? Current work will be lost.')) {
-            this.createNewAutomaton(this.machineType);
-        }
+        if (this.automaton && this.automaton.states.length > 0 &&
+            !confirm('Start a new, empty machine? Unsaved work will be lost.')) return;
+        this.createNewAutomaton(this.machineType);
+        this.showExamplePanel(null);
+        document.getElementById('batch-inputs').value = '';
+        document.getElementById('batch-results').textContent = '';
+        document.getElementById('batch-summary').classList.add('hidden');
+        this.simulator.reset();
+        this.toast('New machine');
     }
 
-    /**
-     * Clear all states and transitions
-     */
-    clear() {
-        if (confirm('Clear all states and transitions?')) {
-            this.automaton.clear();
-            this.editor.clearSelection();
-            this.render();
-            this.updateCodeEditor();
-        }
-    }
-
-    /**
-     * Save automaton to file
-     */
     save() {
+        const name = this.currentExample ? this.currentExample.id : this.machineType;
         const json = JSON.stringify(this.automaton.toJSON(), null, 2);
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
 
         const a = document.createElement('a');
         a.href = url;
-        a.download = `automaton_${this.machineType}_${Date.now()}.json`;
+        a.download = `${name}.json`;
         a.click();
-
         URL.revokeObjectURL(url);
+        this.toast('Saved');
     }
 
-    /**
-     * Load automaton from file
-     */
-    load() {
+    open() {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json,.jff';
@@ -256,27 +385,21 @@ class JFLAPApp {
             const reader = new FileReader();
             reader.onload = (event) => {
                 try {
-                    const content = event.target.result;
-
                     if (file.name.endsWith('.jff')) {
-                        // Load JFLAP format
-                        this.automaton = Automaton.fromJFLAPXML(content);
+                        this.automaton = Automaton.fromJFLAPXML(event.target.result);
+                        this.automaton.saveToHistory();
                     } else {
-                        // Load JSON format
-                        const json = JSON.parse(content);
+                        const json = JSON.parse(event.target.result);
                         this.createNewAutomaton(json.type || 'dfa');
                         this.automaton.loadFromJSON(json);
                     }
-
-                    // Update UI
-                    document.getElementById('machine-type').value = this.automaton.type;
-                    this.machineType = this.automaton.type;
-                    this.editor.setAutomaton(this.automaton);
-                    this.simulator.setAutomaton(this.automaton);
-                    this.render();
-                    this.updateCodeEditor();
+                    this.currentExample = null;
+                    this.showExamplePanel(null);
+                    this.attach();
+                    this.simulator.reset();
+                    this.toast(`Opened ${file.name}`);
                 } catch (error) {
-                    alert('Error loading file: ' + error.message);
+                    this.toast(`Could not open: ${error.message}`);
                 }
             };
             reader.readAsText(file);
@@ -285,501 +408,220 @@ class JFLAPApp {
         input.click();
     }
 
-    /**
-     * Export automaton
-     */
-    export() {
-        const format = prompt('Export format (json/jflap):', 'json');
-        if (!format) return;
+    /* ------------------------------------------------------ transition form */
 
-        let content, filename, type;
-
-        if (format.toLowerCase() === 'jflap' || format.toLowerCase() === 'jff') {
-            content = this.automaton.toJFLAPXML();
-            filename = `automaton_${this.machineType}.jff`;
-            type = 'application/xml';
-        } else {
-            content = JSON.stringify(this.automaton.toJSON(), null, 2);
-            filename = `automaton_${this.machineType}.json`;
-            type = 'application/json';
-        }
-
-        const blob = new Blob([content], { type });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-
-        URL.revokeObjectURL(url);
-    }
-
-    /**
-     * Show help modal
-     */
-    showHelp() {
-        document.getElementById('help-modal').classList.remove('hidden');
-    }
-
-    /**
-     * Run simulation
-     */
-    runSimulation() {
-        const input = document.getElementById('input-string').value;
-        this.simulator.init(input);
-        this.simulator.run();
-        this.render();
-    }
-
-    /**
-     * Step simulation
-     */
-    stepSimulation() {
-        this.simulator.step();
-        this.render();
-    }
-
-    /**
-     * Reset simulation
-     */
-    resetSimulation() {
-        this.simulator.reset();
-        this.render();
-    }
-
-    /**
-     * Run batch tests
-     */
-    runBatchTests() {
-        const textarea = document.getElementById('batch-inputs');
-        const resultsContainer = document.getElementById('batch-results');
-
-        if (!textarea || !resultsContainer) return;
-
-        const inputs = textarea.value.split('\n').filter(s => s.length > 0 || textarea.value.includes('\n'));
-
-        // Include empty string if explicitly entered
-        if (textarea.value === '' || textarea.value.startsWith('\n')) {
-            inputs.unshift('');
-        }
-
-        const results = this.simulator.runBatchTests(inputs);
-        this.simulator.displayBatchResults(results, resultsContainer);
-    }
-
-    /**
-     * Toggle code editor visibility
-     */
-    toggleCodeEditor() {
-        this.codeEditorVisible = !this.codeEditorVisible;
-        const container = document.getElementById('code-editor-container');
-        if (container) {
-            container.classList.toggle('hidden', !this.codeEditorVisible);
-        }
-        if (this.codeEditorVisible) {
-            this.updateCodeEditor();
-        }
-    }
-
-    /**
-     * Set code editor tab
-     */
-    setCodeTab(tab) {
-        this.currentCodeTab = tab;
-
-        document.querySelectorAll('.code-tab').forEach(t => {
-            t.classList.toggle('active', t.dataset.tab === tab);
-        });
-
-        this.updateCodeEditor();
-    }
-
-    /**
-     * Update code editor content
-     */
-    updateCodeEditor() {
-        const editor = document.getElementById('code-editor');
-        if (!editor || !this.codeEditorVisible) return;
-
-        if (this.currentCodeTab === 'json') {
-            editor.value = JSON.stringify(this.automaton.toJSON(), null, 2);
-        } else {
-            editor.value = this.generateJavaScriptCode();
-        }
-    }
-
-    /**
-     * Generate JavaScript code for the automaton
-     */
-    generateJavaScriptCode() {
-        const json = this.automaton.toJSON();
-        let code = `// ${this.machineType.toUpperCase()} Definition\n\n`;
-
-        code += `const automaton = new ${this.getClassName()}();\n\n`;
-        code += `// States\n`;
-
-        json.states.forEach(state => {
-            code += `automaton.addState(new State({\n`;
-            code += `    id: ${state.id},\n`;
-            code += `    name: "${state.name}",\n`;
-            code += `    x: ${state.x},\n`;
-            code += `    y: ${state.y},\n`;
-            code += `    isInitial: ${state.isInitial},\n`;
-            code += `    isFinal: ${state.isFinal}\n`;
-            code += `}));\n\n`;
-        });
-
-        code += `// Transitions\n`;
-        json.transitions.forEach(t => {
-            code += `automaton.addTransition(new Transition({\n`;
-            code += `    fromState: automaton.getState(${t.fromState}),\n`;
-            code += `    toState: automaton.getState(${t.toState}),\n`;
-
-            if (this.machineType === 'tm') {
-                code += `    readSymbol: "${t.readSymbol || ''}",\n`;
-                code += `    writeSymbol: "${t.writeSymbol || ''}",\n`;
-                code += `    direction: "${t.direction || 'R'}"\n`;
-            } else if (this.machineType === 'pda') {
-                code += `    symbols: ${JSON.stringify(t.symbols)},\n`;
-                code += `    stackRead: "${t.stackRead || ''}",\n`;
-                code += `    stackWrite: "${t.stackWrite || ''}"\n`;
-            } else {
-                code += `    symbols: ${JSON.stringify(t.symbols)}\n`;
-            }
-
-            code += `}));\n\n`;
-        });
-
-        code += `// Test the automaton\n`;
-        code += `const input = "your_input_here";\n`;
-        code += `automaton.initSimulation(input);\n`;
-        code += `const accepted = automaton.run();\n`;
-        code += `console.log(\`Input "\${input}" is \${accepted ? 'ACCEPTED' : 'REJECTED'}\`);\n`;
-
-        return code;
-    }
-
-    /**
-     * Get class name for current machine type
-     */
-    getClassName() {
-        switch (this.machineType) {
-            case 'dfa': return 'DFA';
-            case 'nfa': return 'NFA';
-            case 'pda': return 'PDA';
-            case 'tm': return 'TuringMachine';
-            default: return 'DFA';
-        }
-    }
-
-    /**
-     * Apply code from editor
-     */
-    applyCode() {
-        const editor = document.getElementById('code-editor');
-        if (!editor) return;
-
-        try {
-            if (this.currentCodeTab === 'json') {
-                const json = JSON.parse(editor.value);
-                this.createNewAutomaton(json.type || this.machineType);
-                this.automaton.loadFromJSON(json);
-                this.editor.setAutomaton(this.automaton);
-                this.simulator.setAutomaton(this.automaton);
-                this.render();
-            } else {
-                alert('JavaScript code cannot be applied directly. Use JSON format.');
-            }
-        } catch (error) {
-            alert('Error parsing code: ' + error.message);
-        }
-    }
-
-    /**
-     * Format code in editor
-     */
-    formatCode() {
-        const editor = document.getElementById('code-editor');
-        if (!editor) return;
-
-        try {
-            if (this.currentCodeTab === 'json') {
-                const json = JSON.parse(editor.value);
-                editor.value = JSON.stringify(json, null, 2);
-            }
-        } catch (error) {
-            alert('Error formatting: ' + error.message);
-        }
-    }
-
-    /**
-     * Copy code to clipboard
-     */
-    copyCode() {
-        const editor = document.getElementById('code-editor');
-        if (!editor) return;
-
-        navigator.clipboard.writeText(editor.value).then(() => {
-            // Visual feedback
-            const btn = document.getElementById('btn-copy-code');
-            if (btn) {
-                const originalText = btn.textContent;
-                btn.textContent = 'Copied!';
-                setTimeout(() => btn.textContent = originalText, 1500);
-            }
-        });
-    }
-
-    /**
-     * Scroll TM tape
-     */
-    scrollTape(amount) {
-        if (this.automaton && this.automaton.type === 'tm') {
-            // Implementation would scroll the tape view
-            this.simulator.updateTMTape();
-        }
-    }
-
-    /**
-     * Show transition input modal
-     */
     showTransitionModal(fromState, toState) {
-        const modal = document.getElementById('transition-modal');
         const form = document.getElementById('transition-form');
+        document.getElementById('transition-title').textContent = 'Add transition';
+        form.innerHTML = this.transitionFormHtml();
+        this.openModal('transition-modal');
 
-        if (!modal || !form) return;
+        const first = form.querySelector('input');
+        if (first) setTimeout(() => first.focus(), 30);
 
-        // Generate form based on machine type
-        form.innerHTML = this.generateTransitionForm();
-
-        modal.classList.remove('hidden');
-
-        // Focus first input
-        const firstInput = form.querySelector('input');
-        if (firstInput) firstInput.focus();
-
-        // Handle add button
-        document.getElementById('btn-add-transition').onclick = () => {
-            const label = this.getTransitionFormValue();
-            if (label !== null) {
-                this.editor.createTransition(fromState, toState, label);
-                modal.classList.add('hidden');
-            }
+        const submit = () => {
+            const label = this.readTransitionForm();
+            this.editor.createTransition(fromState, toState, label);
+            this.closeModals();
         };
 
-        document.getElementById('btn-cancel-transition').onclick = () => {
-            modal.classList.add('hidden');
-        };
+        form.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+        document.getElementById('btn-add-transition').textContent = 'Add';
+        document.getElementById('btn-add-transition').onclick = submit;
+        document.getElementById('btn-cancel-transition').onclick = () => this.closeModals();
     }
 
-    /**
-     * Generate transition form HTML based on machine type
-     */
-    generateTransitionForm() {
+    showTransitionEditModal(transition) {
+        const form = document.getElementById('transition-form');
+        document.getElementById('transition-title').textContent = 'Edit transition';
+        form.innerHTML = this.transitionFormHtml();
+        this.openModal('transition-modal');
+        this.fillTransitionForm(transition);
+
+        const submit = () => {
+            const parsed = Transition.parseLabel(this.readTransitionForm(), this.machineType);
+            Object.assign(transition, parsed);
+            this.automaton.saveToHistory();
+            this.closeModals();
+            this.render();
+            this.syncUI();
+        };
+
+        form.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+        document.getElementById('btn-add-transition').textContent = 'Save';
+        document.getElementById('btn-add-transition').onclick = submit;
+        document.getElementById('btn-cancel-transition').onclick = () => this.closeModals();
+    }
+
+    transitionFormHtml() {
         switch (this.machineType) {
             case 'dfa':
                 return `
                     <div class="form-group">
-                        <label for="trans-symbol">Symbol:</label>
-                        <input type="text" id="trans-symbol" placeholder="a" maxlength="1">
-                        <small>Enter a single symbol</small>
-                    </div>
-                `;
-
+                        <label for="trans-symbol">Symbols</label>
+                        <input type="text" id="trans-symbol" class="control mono" placeholder="2, 3, 4">
+                        <small>A comma-separated set. Deterministic as long as the sets leaving this state do not overlap.</small>
+                    </div>`;
             case 'nfa':
                 return `
                     <div class="form-group">
-                        <label for="trans-symbol">Symbol(s):</label>
-                        <input type="text" id="trans-symbol" placeholder="a,b or ε">
-                        <small>Enter symbol(s) separated by commas. Use ε for epsilon.</small>
-                    </div>
-                `;
-
+                        <label for="trans-symbol">Symbols</label>
+                        <input type="text" id="trans-symbol" class="control mono" placeholder="a, b">
+                        <small>Comma-separated, or ε for a move that consumes nothing.</small>
+                    </div>`;
             case 'pda':
                 return `
                     <div class="form-group">
-                        <label for="trans-input">Input Symbol:</label>
-                        <input type="text" id="trans-input" placeholder="a or ε">
+                        <label for="trans-input">Read</label>
+                        <input type="text" id="trans-input" class="control mono" placeholder="a or ε">
                     </div>
                     <div class="form-group">
-                        <label for="trans-pop">Pop from Stack:</label>
-                        <input type="text" id="trans-pop" placeholder="Z or ε">
+                        <label for="trans-pop">Pop</label>
+                        <input type="text" id="trans-pop" class="control mono" placeholder="Z or ε">
+                        <small>ε pops nothing.</small>
                     </div>
                     <div class="form-group">
-                        <label for="trans-push">Push to Stack:</label>
-                        <input type="text" id="trans-push" placeholder="AZ or ε">
-                    </div>
-                `;
-
+                        <label for="trans-push">Push</label>
+                        <input type="text" id="trans-push" class="control mono" placeholder="AZ or ε">
+                        <small>The leftmost character ends up on top.</small>
+                    </div>`;
             case 'tm':
                 return `
                     <div class="form-group">
-                        <label for="trans-read">Read Symbol:</label>
-                        <input type="text" id="trans-read" placeholder="0 or □" maxlength="1">
+                        <label for="trans-read">Read</label>
+                        <input type="text" id="trans-read" class="control mono" placeholder="0 or □" maxlength="1">
                     </div>
                     <div class="form-group">
-                        <label for="trans-write">Write Symbol:</label>
-                        <input type="text" id="trans-write" placeholder="1 or □" maxlength="1">
+                        <label for="trans-write">Write</label>
+                        <input type="text" id="trans-write" class="control mono" placeholder="1 or □" maxlength="1">
                     </div>
                     <div class="form-group">
-                        <label for="trans-direction">Move Direction:</label>
-                        <select id="trans-direction">
-                            <option value="R">Right (R)</option>
-                            <option value="L">Left (L)</option>
-                            <option value="S">Stay (S)</option>
+                        <label for="trans-direction">Move</label>
+                        <select id="trans-direction" class="control">
+                            <option value="R">Right</option>
+                            <option value="L">Left</option>
+                            <option value="S">Stay</option>
                         </select>
-                    </div>
-                `;
-
+                    </div>`;
             default:
-                return `
-                    <div class="form-group">
-                        <label for="trans-symbol">Symbol:</label>
-                        <input type="text" id="trans-symbol">
-                    </div>
-                `;
+                return '<div class="form-group"><input type="text" id="trans-symbol" class="control"></div>';
         }
     }
 
-    /**
-     * Get value from transition form
-     */
-    getTransitionFormValue() {
+    readTransitionForm() {
+        const value = (id, fallback = '') => {
+            const node = document.getElementById(id);
+            const v = node ? node.value.trim() : '';
+            return v === '' ? fallback : v;
+        };
+
         switch (this.machineType) {
-            case 'dfa':
-            case 'nfa':
-                return document.getElementById('trans-symbol')?.value || '';
-
             case 'pda':
-                const input = document.getElementById('trans-input')?.value || 'ε';
-                const pop = document.getElementById('trans-pop')?.value || 'ε';
-                const push = document.getElementById('trans-push')?.value || 'ε';
-                return `${input},${pop};${push}`;
-
+                return `${value('trans-input', 'ε')},${value('trans-pop', 'ε')};${value('trans-push', 'ε')}`;
             case 'tm':
-                const read = document.getElementById('trans-read')?.value || '□';
-                const write = document.getElementById('trans-write')?.value || '□';
-                const dir = document.getElementById('trans-direction')?.value || 'R';
-                return `${read};${write},${dir}`;
-
+                return `${value('trans-read', '□')};${value('trans-write', '□')},${value('trans-direction', 'R')}`;
             default:
-                return document.getElementById('trans-symbol')?.value || '';
+                return value('trans-symbol');
         }
     }
 
-    /**
-     * Show state properties modal
-     */
-    showStateModal(state) {
-        const modal = document.getElementById('state-modal');
-        if (!modal) return;
+    fillTransitionForm(transition) {
+        const set = (id, v) => {
+            const node = document.getElementById(id);
+            if (node) node.value = v == null ? '' : v;
+        };
 
+        switch (this.machineType) {
+            case 'pda':
+                set('trans-input', transition.symbols[0] || 'ε');
+                set('trans-pop', transition.stackRead || 'ε');
+                set('trans-push', transition.stackWrite || 'ε');
+                break;
+            case 'tm':
+                set('trans-read', transition.readSymbol || '□');
+                set('trans-write', transition.writeSymbol || '□');
+                set('trans-direction', transition.direction || 'R');
+                break;
+            default:
+                set('trans-symbol', transition.symbols.join(', '));
+        }
+    }
+
+    /* ----------------------------------------------------------- state form */
+
+    showStateModal(state) {
         document.getElementById('state-name').value = state.name;
         document.getElementById('state-initial').checked = state.isInitial;
         document.getElementById('state-final').checked = state.isFinal;
+        this.openModal('state-modal');
+        setTimeout(() => document.getElementById('state-name').select(), 30);
 
-        modal.classList.remove('hidden');
+        const submit = () => {
+            const name = document.getElementById('state-name').value.trim();
+            state.name = name || state.name;
 
-        document.getElementById('btn-save-state').onclick = () => {
-            state.name = document.getElementById('state-name').value || state.name;
-
-            const wasInitial = state.isInitial;
             const makeInitial = document.getElementById('state-initial').checked;
-
-            if (makeInitial && !wasInitial) {
+            if (makeInitial && !state.isInitial) {
                 this.automaton.setInitialState(state);
-            } else if (!makeInitial && wasInitial) {
+            } else if (!makeInitial && state.isInitial) {
                 state.isInitial = false;
                 this.automaton.initialState = null;
             }
-
             state.isFinal = document.getElementById('state-final').checked;
 
-            modal.classList.add('hidden');
+            this.automaton.saveToHistory();
+            this.closeModals();
             this.render();
-            this.updateCodeEditor();
+            this.syncUI();
         };
 
+        document.getElementById('btn-save-state').onclick = submit;
+        document.getElementById('state-name').onkeydown = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); submit(); }
+        };
         document.getElementById('btn-delete-state').onclick = () => {
             this.editor.deleteState(state);
-            modal.classList.add('hidden');
+            this.closeModals();
         };
-
-        document.getElementById('btn-cancel-state').onclick = () => {
-            modal.classList.add('hidden');
-        };
+        document.getElementById('btn-cancel-state').onclick = () => this.closeModals();
     }
 
-    /**
-     * Show transition edit modal
-     */
-    showTransitionEditModal(transition) {
-        // For simplicity, use the same modal but for editing
-        const modal = document.getElementById('transition-modal');
-        const form = document.getElementById('transition-form');
+    /* ---------------------------------------------------------------- misc */
 
-        if (!modal || !form) return;
-
-        form.innerHTML = this.generateTransitionForm();
-        modal.classList.remove('hidden');
-
-        // Pre-fill values
-        this.prefillTransitionForm(transition);
-
-        document.getElementById('btn-add-transition').textContent = 'Save';
-        document.getElementById('btn-add-transition').onclick = () => {
-            const label = this.getTransitionFormValue();
-            if (label !== null) {
-                const parsed = Transition.parseLabel(label, this.machineType);
-                Object.assign(transition, parsed);
-                modal.classList.add('hidden');
-                document.getElementById('btn-add-transition').textContent = 'Add';
-                this.render();
-                this.updateCodeEditor();
-            }
-        };
-
-        document.getElementById('btn-cancel-transition').onclick = () => {
-            modal.classList.add('hidden');
-            document.getElementById('btn-add-transition').textContent = 'Add';
-        };
+    toast(message) {
+        const node = document.getElementById('toast');
+        node.textContent = message;
+        node.classList.add('show');
+        clearTimeout(this.toastTimer);
+        this.toastTimer = setTimeout(() => node.classList.remove('show'), 1900);
     }
 
-    /**
-     * Pre-fill transition form with existing values
-     */
-    prefillTransitionForm(transition) {
-        switch (this.machineType) {
-            case 'dfa':
-            case 'nfa':
-                const symbolInput = document.getElementById('trans-symbol');
-                if (symbolInput) symbolInput.value = transition.symbols.join(',');
-                break;
+    /** Keep the chrome in step with the model: counts, zoom, undo/redo state. */
+    syncUI() {
+        if (!this.automaton) return;
 
-            case 'pda':
-                document.getElementById('trans-input').value = transition.symbols[0] || '';
-                document.getElementById('trans-pop').value = transition.stackRead || '';
-                document.getElementById('trans-push').value = transition.stackWrite || '';
-                break;
+        const states = this.automaton.states.length;
+        const transitions = this.automaton.transitions.length;
 
-            case 'tm':
-                document.getElementById('trans-read').value = transition.readSymbol || '';
-                document.getElementById('trans-write').value = transition.writeSymbol || '';
-                document.getElementById('trans-direction').value = transition.direction || 'R';
-                break;
-        }
+        document.getElementById('badge-counts').textContent =
+            `${states} state${states === 1 ? '' : 's'} · ${transitions} transition${transitions === 1 ? '' : 's'}`;
+        document.getElementById('badge-zoom').textContent =
+            `${Math.round(this.renderer.scale * 100)}%`;
+        document.getElementById('canvas-empty').classList.toggle('hidden', states > 0);
+
+        document.getElementById('btn-undo').disabled = !this.automaton.canUndo();
+        document.getElementById('btn-redo').disabled = !this.automaton.canRedo();
+
+        this.simulator.updateMachineTypeUI();
+        this.simulator.render();
     }
 
-    /**
-     * Render the canvas
-     */
     render() {
         this.editor.render();
+        this.syncUI();
     }
 }
 
-// Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new JFLAPApp();
 });

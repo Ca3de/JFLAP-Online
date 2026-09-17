@@ -1,288 +1,299 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JFLAP Online - Automata Simulator</title>
-    <link rel="stylesheet" href="css/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JFLAP Online — Automata Simulator</title>
+<meta name="description" content="Build and simulate DFAs, NFAs, pushdown automata and Turing machines in the browser, with a library of worked examples.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f46e5'/><circle cx='16' cy='16' r='7' fill='none' stroke='white' stroke-width='2.5'/></svg>">
+<script>
+    // Applied before first paint so the theme never flashes.
+    try {
+        var saved = localStorage.getItem('jflap-theme');
+        if (saved === 'dark' || saved === 'light') {
+            document.documentElement.setAttribute('data-theme', saved);
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        }
+    } catch (e) { /* storage unavailable */ }
+</script>
 </head>
 <body>
-    <div id="app">
-        <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <h1>JFLAP Online</h1>
-                <span class="subtitle">Formal Languages & Automata Simulator</span>
+<div class="app">
+
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark">J</span>
+            <span>JFLAP Online</span>
+            <span class="brand-sub">Formal languages &amp; automata</span>
+        </div>
+
+        <div class="topbar-divider"></div>
+
+        <div class="topbar-group">
+            <select id="machine-type" class="control" aria-label="Machine type">
+                <option value="dfa">DFA</option>
+                <option value="nfa">NFA</option>
+                <option value="pda">Pushdown automaton</option>
+                <option value="tm">Turing machine</option>
+            </select>
+        </div>
+
+        <div class="topbar-spacer"></div>
+
+        <div class="topbar-group">
+            <button id="btn-examples" class="btn btn-primary" title="Browse worked examples">Examples</button>
+            <div class="topbar-divider"></div>
+            <button id="btn-undo" class="btn btn-quiet btn-icon" title="Undo (Ctrl+Z)" aria-label="Undo">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+            </button>
+            <button id="btn-redo" class="btn btn-quiet btn-icon" title="Redo (Ctrl+Y)" aria-label="Redo">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+            </button>
+            <div class="topbar-divider"></div>
+            <button id="btn-new" class="btn">New</button>
+            <button id="btn-open" class="btn">Open</button>
+            <button id="btn-save" class="btn">Save</button>
+            <button id="btn-help" class="btn btn-quiet btn-icon" title="Help" aria-label="Help">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9.2"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.4"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>
+            </button>
+            <button id="btn-theme" class="btn btn-quiet btn-icon" title="Toggle theme" aria-label="Toggle theme">
+                <svg class="icon-sun" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <main class="stage">
+        <div class="canvas-wrap" id="canvas-wrap">
+            <canvas id="automata-canvas"></canvas>
+
+            <div class="palette" role="toolbar" aria-label="Tools">
+                <button class="tool active" id="tool-select" data-tool="select" title="Select and move — V">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M5 3l14 8.3-6.2 1.5L9.7 19z"/></svg>
+                </button>
+                <button class="tool" id="tool-state" data-tool="state" title="Add state — S">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="7.6"/><path d="M12 8.8v6.4M8.8 12h6.4" stroke-linecap="round"/></svg>
+                </button>
+                <button class="tool" id="tool-transition" data-tool="transition" title="Draw transition — T">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c4-9 14-9 18 0"/><path d="M17.2 17.6L21 17l-1.2-3.7"/></svg>
+                </button>
+                <button class="tool" id="tool-delete" data-tool="delete" title="Delete — D">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.8 7l.8 12.2h8.8L17.2 7"/></svg>
+                </button>
+
+                <div class="palette-divider"></div>
+
+                <button class="tool" id="btn-zoom-in" title="Zoom in">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="10.6" cy="10.6" r="6.4"/><path d="M15.4 15.4L20 20M10.6 7.8v5.6M7.8 10.6h5.6"/></svg>
+                </button>
+                <button class="tool" id="btn-zoom-out" title="Zoom out">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="10.6" cy="10.6" r="6.4"/><path d="M15.4 15.4L20 20M7.8 10.6h5.6"/></svg>
+                </button>
+                <button class="tool" id="btn-fit" title="Fit to view — F">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4.6h4.4M15.6 4h4.4v4.4M20 15.6V20h-4.4M8.4 20H4v-4.4"/></svg>
+                </button>
             </div>
-            <nav class="nav">
-                <button id="btn-new" class="btn btn-secondary">New</button>
-                <button id="btn-save" class="btn btn-secondary">Save</button>
-                <button id="btn-load" class="btn btn-secondary">Load</button>
-                <button id="btn-export" class="btn btn-secondary">Export</button>
-                <button id="btn-help" class="btn btn-secondary">Help</button>
-            </nav>
-        </header>
 
-        <!-- Main Content -->
-        <div class="main-container">
-            <!-- Toolbar -->
-            <div class="toolbar">
-                <div class="tool-group">
-                    <label>Machine Type:</label>
-                    <select id="machine-type">
-                        <option value="dfa">DFA (Deterministic Finite Automaton)</option>
-                        <option value="nfa">NFA (Non-deterministic Finite Automaton)</option>
-                        <option value="pda">PDA (Pushdown Automaton)</option>
-                        <option value="tm">Turing Machine</option>
-                    </select>
-                </div>
-                <div class="tool-group">
-                    <label>Tool:</label>
-                    <div class="tool-buttons">
-                        <button id="tool-select" class="tool-btn active" title="Select/Move (V)">
-                            <span class="icon">&#9654;</span> Select
-                        </button>
-                        <button id="tool-state" class="tool-btn" title="Add State (S)">
-                            <span class="icon">&#9679;</span> State
-                        </button>
-                        <button id="tool-transition" class="tool-btn" title="Add Transition (T)">
-                            <span class="icon">&#8594;</span> Transition
-                        </button>
-                        <button id="tool-delete" class="tool-btn" title="Delete (D)">
-                            <span class="icon">&#10005;</span> Delete
-                        </button>
-                    </div>
-                </div>
-                <div class="tool-group">
-                    <button id="btn-clear" class="btn btn-danger">Clear All</button>
-                </div>
+            <div class="canvas-empty" id="canvas-empty">
+                <h2>Nothing on the canvas yet</h2>
+                <p>Open a worked example, or pick the state tool and click to place your first state.</p>
+                <button class="btn btn-primary" id="btn-empty-examples">Browse examples</button>
             </div>
 
-            <!-- Canvas Area -->
-            <div class="workspace">
-                <div class="canvas-container">
-                    <canvas id="automata-canvas"></canvas>
-                    <div id="canvas-overlay" class="canvas-overlay hidden"></div>
-
-                    <!-- Turing Machine Tape (hidden by default) -->
-                    <div id="tm-tape-container" class="tm-tape-container hidden">
-                        <div class="tape-wrapper">
-                            <button id="tape-left" class="tape-nav">&lt;</button>
-                            <div id="tm-tape" class="tm-tape"></div>
-                            <button id="tape-right" class="tape-nav">&gt;</button>
-                        </div>
-                        <div class="tape-info">
-                            <span>Head: <strong id="head-position">0</strong></span>
-                            <span>State: <strong id="current-tm-state">-</strong></span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Right Panel - Simulation Results -->
-                <div class="right-panel" id="right-panel">
-                    <!-- Input Section -->
-                    <div class="panel-section">
-                        <h3>Input</h3>
-                        <div class="input-row">
-                            <input type="text" id="input-string" placeholder="Enter input string...">
-                        </div>
-                        <div class="button-row">
-                            <button id="btn-run" class="btn btn-primary">Run</button>
-                            <button id="btn-step" class="btn btn-secondary">Step</button>
-                            <button id="btn-reset" class="btn btn-secondary">Reset</button>
-                        </div>
-                        <div class="speed-row">
-                            <label for="speed-slider">Speed:</label>
-                            <input type="range" id="speed-slider" min="1" max="10" value="5">
-                            <span id="speed-value">5</span>
-                        </div>
-                    </div>
-
-                    <!-- Status Section -->
-                    <div class="panel-section">
-                        <h3>Status</h3>
-                        <div class="status-grid">
-                            <div class="status-row">
-                                <span class="status-label">Result:</span>
-                                <span id="sim-status" class="status-badge">Ready</span>
-                            </div>
-                            <div class="status-row">
-                                <span class="status-label">State:</span>
-                                <span id="sim-current-state" class="status-value">-</span>
-                            </div>
-                            <div class="status-row">
-                                <span class="status-label">Remaining:</span>
-                                <span id="sim-remaining" class="status-value mono">-</span>
-                            </div>
-                            <div class="status-row" id="stack-display" style="display: none;">
-                                <span class="status-label">Stack:</span>
-                                <span id="sim-stack" class="status-value mono">-</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Execution Trace -->
-                    <div class="panel-section trace-section">
-                        <h3>Execution Trace</h3>
-                        <div id="trace-output" class="trace-output"></div>
-                    </div>
-
-                    <!-- Batch Testing -->
-                    <div class="panel-section">
-                        <h3>Batch Testing</h3>
-                        <textarea id="batch-inputs" placeholder="One string per line..."></textarea>
-                        <button id="btn-batch-run" class="btn btn-primary btn-full">Test All</button>
-                        <div id="batch-results" class="batch-results"></div>
-                    </div>
-                </div>
+            <div class="canvas-badge" id="canvas-badge">
+                <span id="badge-zoom" class="mono">100%</span>
+                <span>·</span>
+                <span id="badge-counts">0 states · 0 transitions</span>
+                <span>·</span>
+                <span>hold space to pan</span>
             </div>
         </div>
 
-        <!-- Code Editor Panel (for programmatic definition) -->
-        <div class="code-panel" id="code-panel">
-            <div class="code-header">
-                <h3>Code Editor</h3>
-                <button id="btn-toggle-code" class="btn btn-secondary">Toggle Code View</button>
-            </div>
-            <div id="code-editor-container" class="code-editor-container hidden">
-                <div class="code-tabs">
-                    <button class="code-tab active" data-tab="json">JSON</button>
-                    <button class="code-tab" data-tab="javascript">JavaScript</button>
+        <aside class="inspector" id="inspector">
+
+            <section class="panel example-card hidden" id="example-panel">
+                <h3 class="example-name" id="example-name"></h3>
+                <p class="example-blurb" id="example-blurb"></p>
+                <p class="example-idea" id="example-idea"></p>
+                <p class="example-note hidden" id="example-note"></p>
+                <div class="example-meta" id="example-meta"></div>
+            </section>
+
+            <section class="panel">
+                <h2 class="panel-title">Simulate</h2>
+                <div class="row">
+                    <input type="text" id="input-string" class="control mono" placeholder="input string" autocomplete="off" spellcheck="false">
+                    <button id="btn-run" class="btn btn-primary">Run</button>
                 </div>
-                <div class="code-content">
-                    <textarea id="code-editor" class="code-editor" spellcheck="false"></textarea>
+                <div class="row" style="margin-top:6px">
+                    <button id="btn-step" class="btn btn-full">Step</button>
+                    <button id="btn-reset" class="btn btn-full">Reset</button>
                 </div>
-                <div class="code-actions">
-                    <button id="btn-apply-code" class="btn btn-primary">Apply Code</button>
-                    <button id="btn-format-code" class="btn btn-secondary">Format</button>
-                    <button id="btn-copy-code" class="btn btn-secondary">Copy</button>
+                <div class="field-row">
+                    <label for="speed-slider">Speed</label>
+                    <input type="range" id="speed-slider" min="1" max="10" value="7">
+                    <span id="speed-value" class="mono">7</span>
                 </div>
-            </div>
+            </section>
+
+            <section class="panel">
+                <h2 class="panel-title">Result</h2>
+                <div class="verdict" id="verdict">
+                    <span class="verdict-dot"></span>
+                    <span id="verdict-text">Ready</span>
+                    <span class="verdict-note" id="verdict-note"></span>
+                </div>
+                <div class="tape-strip" id="input-strip"></div>
+            </section>
+
+            <section class="panel">
+                <h2 class="panel-title">Current state<span id="state-count" class="mono"></span></h2>
+                <div class="chips" id="state-chips"></div>
+
+                <div id="stack-block" class="hidden" style="margin-top:14px">
+                    <h2 class="panel-title">Stack<span class="stack-label">top</span></h2>
+                    <div class="stack" id="stack-view"></div>
+                    <div class="stack-label stack-label-end">bottom</div>
+                </div>
+
+                <div id="tape-block" class="hidden" style="margin-top:14px">
+                    <h2 class="panel-title">Tape<span id="head-pos" class="mono"></span></h2>
+                    <div class="tape-scroll"><div class="tape-strip" id="tape-view"></div></div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2 class="panel-title">Trace</h2>
+                <div class="trace" id="trace"></div>
+            </section>
+
+            <section class="panel">
+                <h2 class="panel-title">Batch test</h2>
+                <textarea id="batch-inputs" class="control mono" rows="4" spellcheck="false" placeholder="one string per line&#10;ε for the empty string"></textarea>
+                <button id="btn-batch" class="btn btn-full" style="margin-top:6px">Test all</button>
+                <div class="batch-summary hidden" id="batch-summary"></div>
+                <div class="batch-results" id="batch-results"></div>
+            </section>
+
+        </aside>
+    </main>
+</div>
+
+<!-- ------------------------------------------------------------ gallery -->
+<div id="gallery-modal" class="modal hidden">
+    <div class="modal-card wide">
+        <div class="modal-head">
+            <h2>Worked examples</h2>
+            <span class="sub" id="gallery-count"></span>
+            <button class="modal-close" data-close aria-label="Close">&times;</button>
         </div>
-
-        <!-- Help Modal -->
-        <div id="help-modal" class="modal hidden">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2>JFLAP Online Help</h2>
-                    <button class="modal-close">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <h3>Getting Started</h3>
-                    <p>JFLAP Online is a web-based tool for creating and simulating automata and formal language machines.</p>
-
-                    <h4>Keyboard Shortcuts</h4>
-                    <ul>
-                        <li><strong>V</strong> - Select tool</li>
-                        <li><strong>S</strong> - Add state tool</li>
-                        <li><strong>T</strong> - Add transition tool</li>
-                        <li><strong>D</strong> - Delete tool</li>
-                        <li><strong>Delete/Backspace</strong> - Delete selected</li>
-                        <li><strong>Ctrl+S</strong> - Save</li>
-                        <li><strong>Ctrl+O</strong> - Load</li>
-                        <li><strong>Ctrl+Z</strong> - Undo</li>
-                        <li><strong>Ctrl+Y</strong> - Redo</li>
-                        <li><strong>Space</strong> - Run/Pause simulation</li>
-                        <li><strong>Right Arrow</strong> - Step forward</li>
-                    </ul>
-
-                    <h4>Creating States</h4>
-                    <ol>
-                        <li>Select the "State" tool</li>
-                        <li>Click anywhere on the canvas to create a state</li>
-                        <li>Double-click a state to edit its properties</li>
-                        <li>Right-click a state to toggle initial/final</li>
-                    </ol>
-
-                    <h4>Creating Transitions</h4>
-                    <ol>
-                        <li>Select the "Transition" tool</li>
-                        <li>Click and drag from one state to another</li>
-                        <li>Enter the transition symbol(s) in the prompt</li>
-                        <li>For NFA: use comma to separate multiple symbols</li>
-                        <li>For epsilon transitions: use 'ε' or leave empty</li>
-                    </ol>
-
-                    <h4>Machine Types</h4>
-                    <ul>
-                        <li><strong>DFA</strong> - Deterministic Finite Automaton: exactly one transition per symbol from each state</li>
-                        <li><strong>NFA</strong> - Non-deterministic Finite Automaton: multiple transitions per symbol, epsilon transitions allowed</li>
-                        <li><strong>PDA</strong> - Pushdown Automaton: NFA with a stack</li>
-                        <li><strong>Turing Machine</strong> - Unlimited tape with read/write head</li>
-                    </ul>
-
-                    <h4>Transition Syntax</h4>
-                    <ul>
-                        <li><strong>DFA/NFA</strong>: single character or 'ε' for epsilon</li>
-                        <li><strong>PDA</strong>: input,stackPop;stackPush (e.g., "a,Z;AZ")</li>
-                        <li><strong>TM</strong>: read;write,direction (e.g., "0;1,R")</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-
-        <!-- Transition Input Modal -->
-        <div id="transition-modal" class="modal hidden">
-            <div class="modal-content modal-small">
-                <div class="modal-header">
-                    <h2>Add Transition</h2>
-                    <button class="modal-close">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div id="transition-form">
-                        <!-- Form content dynamically generated based on machine type -->
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button id="btn-add-transition" class="btn btn-primary">Add</button>
-                    <button id="btn-cancel-transition" class="btn btn-secondary">Cancel</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- State Properties Modal -->
-        <div id="state-modal" class="modal hidden">
-            <div class="modal-content modal-small">
-                <div class="modal-header">
-                    <h2>State Properties</h2>
-                    <button class="modal-close">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label for="state-name">State Name:</label>
-                        <input type="text" id="state-name" placeholder="q0">
-                    </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="state-initial"> Initial State
-                        </label>
-                    </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="state-final"> Final/Accept State
-                        </label>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button id="btn-save-state" class="btn btn-primary">Save</button>
-                    <button id="btn-delete-state" class="btn btn-danger">Delete</button>
-                    <button id="btn-cancel-state" class="btn btn-secondary">Cancel</button>
-                </div>
-            </div>
+        <div class="filters" id="gallery-filters"></div>
+        <div class="modal-body">
+            <div class="gallery" id="gallery-grid"></div>
         </div>
     </div>
+</div>
 
-    <!-- Scripts -->
-    <script src="js/core/State.js"></script>
-    <script src="js/core/Transition.js"></script>
-    <script src="js/core/Automaton.js"></script>
-    <script src="js/machines/DFA.js"></script>
-    <script src="js/machines/NFA.js"></script>
-    <script src="js/machines/PDA.js"></script>
-    <script src="js/machines/TuringMachine.js"></script>
-    <script src="js/ui/CanvasRenderer.js"></script>
-    <script src="js/ui/CanvasEditor.js"></script>
-    <script src="js/ui/Simulator.js"></script>
-    <script src="js/app.js"></script>
+<!-- --------------------------------------------------------- transition -->
+<div id="transition-modal" class="modal hidden">
+    <div class="modal-card" style="max-width:420px">
+        <div class="modal-head">
+            <h2 id="transition-title">Add transition</h2>
+            <button class="modal-close" data-close aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body"><div id="transition-form"></div></div>
+        <div class="modal-foot">
+            <button id="btn-cancel-transition" class="btn">Cancel</button>
+            <button id="btn-add-transition" class="btn btn-primary">Add</button>
+        </div>
+    </div>
+</div>
+
+<!-- -------------------------------------------------------------- state -->
+<div id="state-modal" class="modal hidden">
+    <div class="modal-card" style="max-width:380px">
+        <div class="modal-head">
+            <h2>State</h2>
+            <button class="modal-close" data-close aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="state-name">Name</label>
+                <input type="text" id="state-name" class="control" placeholder="q0">
+            </div>
+            <div class="form-group form-check">
+                <input type="checkbox" id="state-initial"><label for="state-initial" style="margin:0">Initial state</label>
+            </div>
+            <div class="form-group form-check">
+                <input type="checkbox" id="state-final"><label for="state-final" style="margin:0">Accepting state</label>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button id="btn-delete-state" class="btn">Delete</button>
+            <button id="btn-cancel-state" class="btn">Cancel</button>
+            <button id="btn-save-state" class="btn btn-primary">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- --------------------------------------------------------------- help -->
+<div id="help-modal" class="modal hidden">
+    <div class="modal-card">
+        <div class="modal-head">
+            <h2>How to use it</h2>
+            <button class="modal-close" data-close aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body help">
+            <h3>Building a machine</h3>
+            <ul>
+                <li>Pick the <strong>state</strong> tool and click the canvas to place a state. The first one becomes the start state.</li>
+                <li>Pick the <strong>transition</strong> tool and drag from one state to another.</li>
+                <li>Double-click a state to rename it or make it accepting; right-click for the same menu.</li>
+                <li>Drag with the select tool to move states. Hold <kbd>space</kbd> and drag to pan; scroll to zoom toward the cursor.</li>
+            </ul>
+
+            <h3>Transition syntax</h3>
+            <ul>
+                <li><strong>DFA / NFA</strong> — a comma-separated set of symbols, e.g. <code>2, 3, 4</code>. A DFA stays deterministic as long as the sets leaving a state do not overlap. Use <code>ε</code> for an epsilon move (NFA only).</li>
+                <li><strong>PDA</strong> — read, pop and push. A pop of <code>ε</code> pops nothing; the leftmost pushed character ends up on top. <code>Z</code> starts on the stack.</li>
+                <li><strong>Turing machine</strong> — read, write and a direction. <code>□</code> is the blank symbol.</li>
+            </ul>
+
+            <h3>Running it</h3>
+            <ul>
+                <li><strong>Run</strong> plays the whole input; <strong>Step</strong> advances one configuration at a time.</li>
+                <li>The result panel shows the input with the consumed prefix struck through and the symbol under the head highlighted.</li>
+                <li><strong>Batch test</strong> takes one string per line and reports each verdict. Write <code>ε</code> for the empty string. Loading an example fills it with strings that are known to be in, and known to be out of, the language.</li>
+            </ul>
+
+            <h3>Keyboard</h3>
+            <ul>
+                <li><kbd>V</kbd> select · <kbd>S</kbd> state · <kbd>T</kbd> transition · <kbd>D</kbd> delete · <kbd>F</kbd> fit</li>
+                <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo · <kbd>Del</kbd> remove selection</li>
+                <li><kbd>Enter</kbd> in the input box runs · <kbd>→</kbd> steps · <kbd>Esc</kbd> closes dialogs</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/core/util.js"></script>
+<script src="js/core/State.js"></script>
+<script src="js/core/Transition.js"></script>
+<script src="js/core/Automaton.js"></script>
+<script src="js/machines/DFA.js"></script>
+<script src="js/machines/NFA.js"></script>
+<script src="js/machines/PDA.js"></script>
+<script src="js/machines/TuringMachine.js"></script>
+<script src="js/data/examples.js"></script>
+<script src="js/ui/CanvasRenderer.js"></script>
+<script src="js/ui/CanvasEditor.js"></script>
+<script src="js/ui/Simulator.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
