@@ -95,6 +95,30 @@ class PDA extends Automaton {
     }
 
     /**
+     * Key identifying a configuration, used to deduplicate the frontier.
+     * Without this a nondeterministic PDA re-explores the same configuration
+     * once for every path that reaches it, which blows up exponentially.
+     */
+    configKey(config) {
+        return `${config.state.id}|${config.stack.join('')}|${config.inputIndex}`;
+    }
+
+    /**
+     * True if any live configuration has consumed the whole input and sits in
+     * an accepting configuration. Checked BEFORE the frontier is replaced, so
+     * an accepting configuration with no outgoing transitions still counts.
+     */
+    hasAcceptingConfiguration() {
+        for (const config of this.configurations) {
+            if (config.inputIndex < this.input.length) continue;
+
+            if (this.acceptByFinalState && config.state.isFinal) return true;
+            if (this.acceptByEmptyStack && config.stack.length === 0) return true;
+        }
+        return false;
+    }
+
+    /**
      * Perform one step of PDA simulation
      */
     step() {
@@ -104,12 +128,29 @@ class PDA extends Automaton {
             return false;
         }
 
+        // An accepting configuration may have no outgoing transitions at all.
+        // Detect it here, before the frontier is replaced by its successors.
+        if (this.hasAcceptingConfiguration()) {
+            this.isAccepted = true;
+            this.isRunning = false;
+            return false;
+        }
+
         // Clear highlighting
         this.states.forEach(s => s.active = false);
         this.transitions.forEach(t => t.highlighted = false);
 
+        const previousKeys = new Set(this.configurations.map(c => this.configKey(c)));
         const newConfigurations = [];
+        const seen = new Set();
         const stepDescriptions = [];
+        const pushConfig = (config) => {
+            const key = this.configKey(config);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            newConfigurations.push(config);
+            return true;
+        };
 
         // Process each current configuration
         this.configurations.forEach(config => {
@@ -128,12 +169,14 @@ class PDA extends Automaton {
                     const toState = typeof t.toState === 'object' ? t.toState : this.getState(t.toState);
                     if (toState) {
                         const newStack = this.applyStackOperation(stack, t);
-                        newConfigurations.push({
+                        const added = pushConfig({
                             state: toState,
                             stack: newStack,
                             inputIndex: inputIndex // Don't advance
                         });
-                        stepDescriptions.push(`ε-move: ${state.name} → ${toState.name}, stack: ${newStack.join('') || 'ε'}`);
+                        if (added) {
+                            stepDescriptions.push(`ε-move: ${state.name} → ${toState.name}, stack: ${newStack.join('') || 'ε'}`);
+                        }
                         t.highlighted = true;
                     }
                 }
@@ -143,12 +186,14 @@ class PDA extends Automaton {
                     const toState = typeof t.toState === 'object' ? t.toState : this.getState(t.toState);
                     if (toState) {
                         const newStack = this.applyStackOperation(stack, t);
-                        newConfigurations.push({
+                        const added = pushConfig({
                             state: toState,
                             stack: newStack,
                             inputIndex: inputIndex + 1
                         });
-                        stepDescriptions.push(`Read '${symbol}': ${state.name} → ${toState.name}, stack: ${newStack.join('') || 'ε'}`);
+                        if (added) {
+                            stepDescriptions.push(`Read '${symbol}': ${state.name} → ${toState.name}, stack: ${newStack.join('') || 'ε'}`);
+                        }
                         t.highlighted = true;
                     }
                 }
@@ -189,13 +234,20 @@ class PDA extends Automaton {
             return false;
         }
 
-        // Check if we're done (all input consumed)
-        const allDone = this.configurations.every(c => c.inputIndex >= this.input.length);
-        if (allDone) {
-            this.checkAcceptance();
-            if (this.isAccepted !== null) {
-                return false;
-            }
+        // Accept as soon as ANY branch sits in an accepting configuration - a
+        // single lagging branch must not suppress acceptance.
+        if (this.hasAcceptingConfiguration()) {
+            this.isAccepted = true;
+            this.isRunning = false;
+            return false;
+        }
+
+        // A frontier identical to the previous one means only ε-cycles remain;
+        // nothing further can happen, so stop rather than spin.
+        if (previousKeys.size === seen.size && [...seen].every(k => previousKeys.has(k))) {
+            this.isAccepted = false;
+            this.isRunning = false;
+            return false;
         }
 
         return true;
@@ -230,37 +282,8 @@ class PDA extends Automaton {
      * Check acceptance
      */
     checkAcceptance() {
-        // Check if any configuration has consumed all input
-        const finalConfigs = this.configurations.filter(c => c.inputIndex >= this.input.length);
-
-        if (finalConfigs.length === 0) {
-            this.isAccepted = false;
-            return false;
-        }
-
-        // Check final state acceptance
-        if (this.acceptByFinalState) {
-            const finalStates = this.getFinalStates();
-            for (const config of finalConfigs) {
-                if (finalStates.some(f => f.id === config.state.id)) {
-                    this.isAccepted = true;
-                    return true;
-                }
-            }
-        }
-
-        // Check empty stack acceptance
-        if (this.acceptByEmptyStack) {
-            for (const config of finalConfigs) {
-                if (config.stack.length === 0) {
-                    this.isAccepted = true;
-                    return true;
-                }
-            }
-        }
-
-        this.isAccepted = false;
-        return false;
+        this.isAccepted = this.hasAcceptingConfiguration();
+        return this.isAccepted;
     }
 
     /**

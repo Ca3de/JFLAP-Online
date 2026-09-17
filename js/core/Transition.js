@@ -169,17 +169,15 @@ class Transition {
     static parseLabel(label, machineType) {
         switch (machineType) {
             case 'dfa':
-                // Single symbol only
+            case 'nfa': {
+                // A comma-separated set of symbols. A DFA stays deterministic as
+                // long as the sets leaving a state are disjoint, and one edge
+                // labelled "2, 3, 4" beats three parallel edges every time.
+                const symbols = label.split(',').map(s => s.trim()).filter(s => s !== '');
                 return {
-                    symbols: [label.trim() || 'ε']
+                    symbols: symbols.length > 0 ? symbols : ['ε']
                 };
-
-            case 'nfa':
-                // Can have multiple symbols separated by comma
-                const nfaSymbols = label.split(',').map(s => s.trim()).filter(s => s !== '');
-                return {
-                    symbols: nfaSymbols.length > 0 ? nfaSymbols : ['ε']
-                };
+            }
 
             case 'pda':
                 // Format: input,stackPop;stackPush or input,stackPop→stackPush

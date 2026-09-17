@@ -305,9 +305,28 @@ class Automaton {
         // Limit history size
         if (this.history.length > this.maxHistory) {
             this.history.shift();
-        } else {
-            this.historyIndex++;
         }
+
+        // The cursor always points at the snapshot just pushed. Incrementing it
+        // instead drifts by one for every snapshot dropped off the front.
+        this.historyIndex = this.history.length - 1;
+    }
+
+    /**
+     * Restore a snapshot without disturbing the timeline being walked.
+     *
+     * loadFromJSON() deliberately resets history (opening a machine must not be
+     * undoable back into the previous one), so undo/redo cannot call it
+     * directly - doing so wipes the very timeline they are stepping through.
+     */
+    restoreSnapshot(snapshot) {
+        const history = this.history;
+        const historyIndex = this.historyIndex;
+
+        this.loadFromJSON(snapshot);
+
+        this.history = history;
+        this.historyIndex = historyIndex;
     }
 
     /**
@@ -316,7 +335,7 @@ class Automaton {
     undo() {
         if (this.historyIndex > 0) {
             this.historyIndex--;
-            this.loadFromJSON(this.history[this.historyIndex]);
+            this.restoreSnapshot(this.history[this.historyIndex]);
             return true;
         }
         return false;
@@ -328,10 +347,18 @@ class Automaton {
     redo() {
         if (this.historyIndex < this.history.length - 1) {
             this.historyIndex++;
-            this.loadFromJSON(this.history[this.historyIndex]);
+            this.restoreSnapshot(this.history[this.historyIndex]);
             return true;
         }
         return false;
+    }
+
+    canUndo() {
+        return this.historyIndex > 0;
+    }
+
+    canRedo() {
+        return this.historyIndex < this.history.length - 1;
     }
 
     /**
@@ -379,9 +406,11 @@ class Automaton {
 
         this.resetSimulation();
 
-        if (!clearHistory) {
-            // Don't save to history when loading
-        }
+        // Opening a machine starts a fresh timeline: it must not be undoable
+        // back into whatever was on the canvas before. undo()/redo() therefore
+        // go through restoreSnapshot(), which preserves the timeline.
+        this.history = [JSON.parse(JSON.stringify(json))];
+        this.historyIndex = 0;
     }
 
     /**
